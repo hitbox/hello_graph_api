@@ -2,6 +2,7 @@ import argparse
 import configparser
 import json
 import logging.config
+import math
 import re
 
 from pprint import pprint
@@ -39,8 +40,11 @@ def graph_get(url, access_token):
     response = requests.get(url, headers=headers)
     return response
 
-def hello_graph_api(config, output=None):
-    # working out how to use ms graph api
+def hello_graph_api(config, output=None, limit_next=1):
+    if limit_next is None:
+        # follow all nextLinks
+        limit_next = math.inf
+
     app = msal.ConfidentialClientApplication(
         client_id = config['client_id'],
         authority = config['authority'],
@@ -59,8 +63,9 @@ def hello_graph_api(config, output=None):
             config['password'],
             scopes = config['scopes'],
         )
+        if not token_result:
+            token_result = app.acquire_token_for_client(config['scopes'])
 
-    token_result = app.acquire_token_for_client(config['scopes'])
     access_token = token_result['access_token']
 
     # get from endpoint until nextLink is not included
@@ -68,10 +73,14 @@ def hello_graph_api(config, output=None):
     responses = []
     while True:
         try:
+            print(endpoint)
             response = graph_get(endpoint, access_token)
             data = response.json()
             responses.append(data)
             if '@odata.nextLink' not in data:
+                break
+            limit_next -= 1
+            if not limit_next:
                 break
             endpoint = data['@odata.nextLink']
         except KeyboardInterrupt:
@@ -79,7 +88,7 @@ def hello_graph_api(config, output=None):
             break
 
     if not output:
-        print(responses)
+        pprint(responses)
     else:
         with open(output, 'w') as output_f:
             json.dump(responses, output_f, indent=4)
@@ -105,6 +114,12 @@ def main():
         help = 'Output filename for JSON responses.'
     )
     parser.add_argument(
+        '--limit',
+        type = int,
+        help = 'Number of nextLink links to follow, including the first'
+               ' request. Defaults to one request.'
+    )
+    parser.add_argument(
         '--dump',
         action = 'store_true',
         help = 'Dump processed config.'
@@ -124,7 +139,11 @@ def main():
         pprint(config)
         parser.exit()
 
-    hello_graph_api(config, output=args.output)
+    hello_graph_api(
+        config,
+        output = args.output,
+        limit_next = args.limit,
+    )
 
 if __name__ == '__main__':
     main()
