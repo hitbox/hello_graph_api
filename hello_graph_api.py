@@ -1,5 +1,7 @@
 import argparse
 import configparser
+import json
+import logging.config
 import re
 
 from pprint import pprint
@@ -20,6 +22,8 @@ def process_config(cp):
         authority = sec['authority'],
         secret = sec['secret'],
         username = sec['username'],
+        password = sec['password'],
+        endpoint = sec['endpoint'],
     )
     # assemble numbered scopes names into a list
     config['scopes'] = [sec[key] for key in sec if scopes_re.match(key)]
@@ -35,7 +39,7 @@ def graph_get(url, access_token):
     response = requests.get(url, headers=headers)
     return response
 
-def hello_graph_api(config):
+def hello_graph_api(config, output=None):
     # working out how to use ms graph api
     app = msal.ConfidentialClientApplication(
         client_id = config['client_id'],
@@ -43,25 +47,76 @@ def hello_graph_api(config):
         client_credential = config['secret'],
     )
 
-    result = app.acquire_token_for_client(config['scopes'])
-    access_token = result['access_token']
+    accounts = app.get_accounts(username=config['username'])
+    for account in accounts:
+        scopes = config['scopes']
+        token_result = app.acquire_token_silent(scopes, account=account)
+        if token_result:
+            break
+    else:
+        token_result = app.acquire_token_by_username_password(
+            config['username'],
+            config['password'],
+            scopes = config['scopes'],
+        )
 
-    username = config['username']
-    url = f'https://graph.microsoft.com/v1.0/users/{username}/messages'
-    response = graph_get(url, access_token)
-    pprint(response.json())
+    token_result = app.acquire_token_for_client(config['scopes'])
+    access_token = token_result['access_token']
+
+    # get from endpoint until nextLink is not included
+    endpoint = config['endpoint']
+    responses = []
+    while True:
+        try:
+            response = graph_get(endpoint, access_token)
+            data = response.json()
+            responses.append(data)
+            if '@odata.nextLink' not in data:
+                break
+            endpoint = data['@odata.nextLink']
+        except KeyboardInterrupt:
+            # break loop and use what we've got
+            break
+
+    if not output:
+        print(responses)
+    else:
+        with open(output, 'w') as output_f:
+            json.dump(responses, output_f, indent=4)
+
+def config_has_logging(cp):
+    """
+    ConfigParser instance has the sections necessary to config logging.
+    """
+    return set(['loggers', 'handlers', 'formatters']).issubset(cp)
 
 def main():
     """
     Hello world for Microsoft Graph API.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('config', nargs='+')
-    parser.add_argument('--dump', action='store_true', help='Dump processed config.')
+    parser.add_argument(
+        'config',
+        nargs = '+',
+        help = 'Path to INI config file.'
+    )
+    parser.add_argument(
+        '--output',
+        help = 'Output filename for JSON responses.'
+    )
+    parser.add_argument(
+        '--dump',
+        action = 'store_true',
+        help = 'Dump processed config.'
+    )
     args = parser.parse_args()
 
     cp = configparser.ConfigParser()
     cp.read(args.config)
+
+    if config_has_logging(cp):
+        logging.config.fileConfig(cp)
+
     config = process_config(cp)
 
     if args.dump:
@@ -69,7 +124,7 @@ def main():
         pprint(config)
         parser.exit()
 
-    hello_graph_api(config)
+    hello_graph_api(config, output=args.output)
 
 if __name__ == '__main__':
     main()
