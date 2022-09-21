@@ -1,6 +1,4 @@
 import argparse
-import base64
-import codecs
 import configparser
 import json
 import logging.config
@@ -17,64 +15,7 @@ try:
 except ImportError:
     marshmallow = None
 else:
-    from marshmallow import fields
-
-    class Base64ContentField(fields.Field):
-
-        def _deserialize(self, string_of_bytes, attr, data, **kwargs):
-            try:
-                return codecs.decode(base64.b64decode(string_of_bytes))
-            except TypeError:
-                raise marshmallow.ValidationError(
-                    'Base 64 content field must be string or bytes.')
-
-    class BodySchema(marshmallow.Schema):
-
-        content = fields.String()
-        content_type = fields.String(data_key='contentType')
-
-
-    class EmailAddressSchema(marshmallow.Schema):
-
-        address = fields.String()
-        name = fields.String()
-
-
-    class SenderSchema(marshmallow.Schema):
-
-        email_address = fields.Nested(EmailAddressSchema, data_key='emailAddress')
-
-
-    class AttachmentSchema(marshmallow.Schema):
-
-        class Meta:
-            unknown = marshmallow.EXCLUDE
-
-
-        content_type = fields.String(data_key='contentType')
-        content = Base64ContentField(data_key='contentBytes')
-        id = fields.String()
-        is_inline = fields.Boolean(data_key='isInline')
-        last_modified_datetime = fields.DateTime(data_key='lastModifiedDateTime')
-        name = fields.String()
-        size = fields.Integer()
-
-
-    class MessageSchema(marshmallow.Schema):
-
-        class Meta:
-            unknown = marshmallow.EXCLUDE
-
-
-        sender = fields.Nested(SenderSchema)
-        subject = fields.String()
-        received_datetime = fields.DateTime(data_key='receivedDateTime')
-        body = fields.Nested(BodySchema)
-
-        attachments = fields.List(
-            fields.Nested(AttachmentSchema)
-        )
-
+    from graphschema import MessageSchema
 
 config_scopes_re = re.compile('^scopes\d+')
 
@@ -167,7 +108,6 @@ def hello_graph_api(config, output=None, limit_next=1):
             # break loop and use what we've got
             break
 
-    pprint(messages)
     if marshmallow:
         message_schema = MessageSchema()
         messages = message_schema.load(messages, many=True, partial=True)
